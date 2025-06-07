@@ -39,10 +39,15 @@ Python 3.7+ telepítve
 pip install -r requirements.txt
 ```
 
-### 3. **Alkalmazás indítása**
+### 3. **Mappa létrehozása**
+```bash
+mkdir uploads
+```
+### 4. **Alkalmazás indítása**
 ```bash
 python app_clean.py
 ```
+
 
 ### 4. **Hozzáférés**
 - **Böngészőben:** `http://localhost:5000`
