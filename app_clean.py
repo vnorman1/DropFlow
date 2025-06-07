@@ -431,19 +431,22 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-<script>
-    const App = {
+<script>    const App = {
         files: {{ files_json | safe }},
         view: 'grid',
         sort: 'date_desc',
-        wavesurfer: null,        init() {
+        wavesurfer: null,
+        lastModified: 0,
+        fileCount: 0,
+        pollingInterval: null,        init() {
             this.cacheDOMElements();
             this.initTheme();
             this.bindEvents();
             this.loadState();
             this.renderFiles();
             this.startSystemMonitoring();
-        },        cacheDOMElements() {
+            this.startFilePolling();
+        },cacheDOMElements() {
             this.dom = {
                 themeToggle: document.getElementById('theme-toggle'),
                 themeToggleDesktop: document.getElementById('theme-toggle-desktop'),
@@ -756,22 +759,33 @@ HTML_TEMPLATE = """
                     document.getElementById(progressId).style.width = percent + '%';
                     document.getElementById(`percent-${progressId}`).textContent = percent + '%';
                 }
-            });
-
-            xhr.addEventListener('load', () => {
+            });            xhr.addEventListener('load', async (e) => {
+                console.log('Upload completed with status:', xhr.status);
                 const bar = document.getElementById(progressId);
                 const wrapper = document.getElementById(`wrapper-${progressId}`);
                 if (xhr.status === 200) {
+                    console.log('Upload successful, refreshing file list...');
                     bar.className = 'bg-green-600 h-2 rounded-full transition-all duration-300';
                     document.getElementById(`percent-${progressId}`).textContent = 'Kész!';
                     setTimeout(() => {
                         wrapper.style.opacity = '0';
                         setTimeout(() => wrapper.remove(), 300);
-                        location.reload();
                     }, 1000);
+                      // Refresh file list without page reload
+                    try {
+                        await App.refreshFileList();
+                        // Update polling state immediately to prevent duplicate notifications
+                        await App.updatePollingState();
+                        App.showNotification('Fájl sikeresen feltöltve!', 'success');
+                    } catch (error) {
+                        console.error('Failed to refresh file list after upload:', error);
+                        App.showNotification('Fájl feltöltve, de a lista frissítése sikertelen. Frissítsd az oldalt!', 'warning');
+                    }
                 } else {
+                    console.log('Upload failed with status:', xhr.status);
                     bar.className = 'bg-red-600 h-2 rounded-full transition-all duration-300';
                     document.getElementById(`percent-${progressId}`).textContent = 'Hiba!';
+                    App.showNotification('Hiba a fájl feltöltésekor!', 'error');
                 }
             });
             xhr.send(formData);
@@ -841,8 +855,7 @@ HTML_TEMPLATE = """
                 });
                 
                 const result = await response.json();
-                
-                if (result.success) {
+                  if (result.success) {
                     // Remove from files array
                     this.files = this.files.filter(f => f.name !== filename);
                     
@@ -852,6 +865,9 @@ HTML_TEMPLATE = """
                     // Update upload info in sidebar
                     this.updateUploadInfo();
                     
+                    // Update polling state immediately to prevent duplicate notifications
+                    await this.updatePollingState();
+                    
                     // Show success message (optional)
                     this.showNotification('Fájl sikeresen törölve!', 'success');
                 } else {
@@ -860,6 +876,32 @@ HTML_TEMPLATE = """
             } catch (error) {
                 console.error('Delete error:', error);
                 this.showNotification('Hiba történt a fájl törlésekor.', 'error');
+            }        },
+          async refreshFileList() {
+            try {
+                console.log('Refreshing file list...');
+                
+                // Fetch updated file list from server
+                const response = await fetch('/api/files');
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                
+                const data = await response.json();
+                console.log('Received file data:', data);
+                
+                // Update files array
+                this.files = data.files;
+                
+                // Re-render file list
+                this.renderFiles();
+                
+                // Update upload info in sidebar
+                this.updateUploadInfo();
+                
+                console.log('File list refreshed successfully');
+                
+            } catch (error) {
+                console.error('Failed to refresh file list:', error);
+                this.showNotification('Hiba a fájllista frissítésekor', 'error');
             }
         },
         
@@ -905,13 +947,92 @@ HTML_TEMPLATE = """
                 setTimeout(() => notification.remove(), 300);
             }, 3000);
         },
-        
-        formatBytes(bytes) {
+          formatBytes(bytes) {
             if (bytes === 0) return '0 B';
             const k = 1024;
             const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        },        // File polling methods for cross-device synchronization
+        startFilePolling() {
+            console.log('Starting file polling for cross-device sync...');
+            
+            // Initialize current state
+            this.updatePollingState();
+            
+            // Start polling every 10 seconds
+            this.setPollingInterval(10000);
+            
+            // Adjust polling frequency based on page visibility
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    // Slow down polling when page is hidden (30 seconds)
+                    this.setPollingInterval(30000);
+                    console.log('Page hidden, reduced polling frequency');
+                } else {
+                    // Resume normal polling when page becomes visible
+                    this.setPollingInterval(10000);
+                    console.log('Page visible, resumed normal polling');
+                    // Immediately check for changes when returning to page
+                    this.checkForFileChanges();
+                }
+            });
+        },
+
+        setPollingInterval(interval) {
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+            }
+            this.pollingInterval = setInterval(() => {
+                this.checkForFileChanges();
+            }, interval);
+        },
+
+        async updatePollingState() {
+            try {
+                const response = await fetch('/api/files/check');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.lastModified = data.last_modified;
+                    this.fileCount = data.file_count;
+                    console.log('Polling state updated:', data);
+                }
+            } catch (error) {
+                console.error('Failed to update polling state:', error);
+            }
+        },
+
+        async checkForFileChanges() {
+            try {
+                const response = await fetch('/api/files/check');
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                
+                // Check if files have changed
+                const hasChanges = (
+                    data.last_modified > this.lastModified || 
+                    data.file_count !== this.fileCount
+                );
+                
+                if (hasChanges) {
+                    console.log('File changes detected, refreshing list...');
+                    await this.refreshFileList();
+                    this.lastModified = data.last_modified;
+                    this.fileCount = data.file_count;
+                    this.showNotification('Fájlok frissítve más eszközről', 'info');
+                }
+            } catch (error) {
+                console.error('Failed to check for file changes:', error);
+            }
+        },
+
+        stopFilePolling() {
+            if (this.pollingInterval) {
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = null;
+                console.log('File polling stopped');
+            }
         }
     };
 
@@ -1024,6 +1145,68 @@ def api_system_info():
             'storage_info': storage_info,
             'system_info': system_info,
             'upload_info': upload_info,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/files')
+def api_files():
+    """API endpoint to get current file list."""
+    try:
+        filenames = os.listdir(app.config['UPLOAD_FOLDER'])
+        files_data = []
+        for name in filenames:
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], name)
+            if os.path.isfile(filepath):
+                stat = os.stat(filepath)
+                preview_type, icon = get_file_info(name)
+                files_data.append({
+                    'name': name,
+                    'size': stat.st_size,
+                    'size_formatted': format_bytes(stat.st_size),
+                    'date': stat.st_mtime,
+                    'date_formatted': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
+                    'preview_type': preview_type,
+                    'icon': icon                })
+        
+        return jsonify({
+            'files': files_data,
+            'count': len(files_data),
+            'total_size': sum(f['size'] for f in files_data)
+        })
+    except FileNotFoundError:
+        return jsonify({'files': [], 'count': 0, 'total_size': 0})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/files/check')
+def api_files_check():
+    """API endpoint to check for file changes (for polling)."""
+    try:
+        upload_folder = app.config['UPLOAD_FOLDER']
+        if not os.path.exists(upload_folder):
+            return jsonify({
+                'last_modified': 0,
+                'file_count': 0,
+                'has_changes': False
+            })
+        
+        # Get the latest modification time in the upload folder
+        latest_time = 0
+        file_count = 0
+        
+        for filename in os.listdir(upload_folder):
+            filepath = os.path.join(upload_folder, filename)
+            if os.path.isfile(filepath):
+                file_count += 1
+                mtime = os.path.getmtime(filepath)
+                if mtime > latest_time:
+                    latest_time = mtime
+        
+        return jsonify({
+            'last_modified': latest_time,
+            'file_count': file_count,
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
