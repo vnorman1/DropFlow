@@ -141,5 +141,5 @@ Minden fejlesztési javaslat és hozzájárulás üdvözölt!
 ---
 
 **Készítette:** Vajda Norman 
-**Verzió:** 2.0  
+**Verzió:** 2.1  
 **Frissítve:** 2025.06.07
