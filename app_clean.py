@@ -7,6 +7,7 @@ import psutil
 import platform
 from datetime import datetime
 from flask import Flask, request, send_from_directory, jsonify, render_template_string, Response, redirect, url_for
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.utils import secure_filename
 import qrcode
 from io import BytesIO
@@ -18,6 +19,14 @@ PORT = 5000
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 * 1024  # 16 GB max méret
+app.config['SECRET_KEY'] = 'dropflow-chat-secret-key'
+
+# SocketIO inicializálása
+socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger=False)
+
+# Chat üzenetek tárolása (memóriában)
+chat_messages = []
+MAX_MESSAGES = 100  # Maximum üzenetek száma a memóriában
 
 # --- Segédfüggvények ---
 
@@ -129,6 +138,75 @@ def get_file_info(filename):
     return preview_type, icon
 
 
+# --- Chat WebSocket események ---
+
+@socketio.on('connect')
+def handle_connect():
+    """Felhasználó csatlakozása a chat szobához"""
+    join_room('main_chat')
+    # Küldj el korábbi üzeneteket az új felhasználónak
+    emit('previous_messages', {'messages': chat_messages[-50:]})  # Utolsó 50 üzenet
+    print('Felhasználó csatlakozott a chathez')
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Felhasználó kilépése a chat szobából"""
+    leave_room('main_chat')
+    print('Felhasználó kilépett a chatből')
+
+@socketio.on('send_message')
+def handle_message(data):
+    """Új chat üzenet kezelése"""
+    try:
+        message = data.get('message', '').strip()
+        username = data.get('username', 'Névtelen').strip()
+        
+        if not message:
+            return
+        
+        # Üzenet létrehozása
+        chat_message = {
+            'id': len(chat_messages) + 1,
+            'username': username[:50],  # Max 50 karakter
+            'message': message[:1000],  # Max 1000 karakter
+            'timestamp': datetime.now().isoformat(),
+            'formatted_time': datetime.now().strftime('%H:%M')
+        }
+        
+        # Hozzáadás a tárolt üzenetekhez
+        chat_messages.append(chat_message)
+        
+        # Ha túl sok üzenet van, töröljük a régieket
+        if len(chat_messages) > MAX_MESSAGES:
+            chat_messages.pop(0)
+        
+        # Üzenet broadcast minden csatlakozott felhasználónak
+        socketio.emit('new_message', chat_message, room='main_chat')
+        
+        print(f'Új üzenet: {username}: {message}')
+        
+    except Exception as e:
+        print(f'Hiba az üzenet kezelésekor: {e}')
+
+@socketio.on('typing')
+def handle_typing(data):
+    """Gépelés jelzés kezelése"""
+    try:
+        username = data.get('username', 'Valaki')
+        socketio.emit('user_typing', {'username': username}, room='main_chat', include_self=False)
+    except Exception as e:
+        print(f'Hiba a gépelés jelzés kezelésekor: {e}')
+
+@socketio.on('stop_typing')
+def handle_stop_typing(data):
+    """Gépelés befejezés jelzés kezelése"""
+    try:
+        username = data.get('username', 'Valaki')
+        socketio.emit('user_stop_typing', {'username': username}, room='main_chat', include_self=False)
+    except Exception as e:
+        print(f'Hiba a gépelés leállítás kezelésekor: {e}')
+
+
 # --- HTML & JS Sablon ---
 
 HTML_TEMPLATE = """
@@ -146,9 +224,9 @@ HTML_TEMPLATE = """
     </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/wavesurfer.js@7"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
@@ -229,9 +307,77 @@ HTML_TEMPLATE = """
             justify-content: center;
             color: white;
         }
-        
-        #preview-modal.hidden { display: none; }
+          #preview-modal.hidden { display: none; }
         .preview-content-area { max-height: 85vh; }
+        
+        /* Custom Scrollbar Styles */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(243, 244, 246, 0.5);
+            border-radius: 4px;
+        }
+        
+        .dark ::-webkit-scrollbar-track {
+            background: rgba(31, 41, 55, 0.5);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.7);
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(107, 114, 128, 0.9);
+        }
+        
+        .dark ::-webkit-scrollbar-thumb {
+            background: rgba(75, 85, 99, 0.7);
+        }
+        
+        .dark ::-webkit-scrollbar-thumb:hover {
+            background: rgba(107, 114, 128, 0.9);
+        }
+        
+        /* Chat specific scrollbar */
+        #chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        #chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        #chat-messages::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+        
+        #chat-messages::-webkit-scrollbar-thumb:hover {
+            background: rgba(107, 114, 128, 0.7);
+        }
+        
+        .dark #chat-messages::-webkit-scrollbar-thumb {
+            background: rgba(75, 85, 99, 0.5);
+        }
+        
+        .dark #chat-messages::-webkit-scrollbar-thumb:hover {
+            background: rgba(107, 114, 128, 0.7);
+        }
+        
+        /* Firefox scrollbar support */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(156, 163, 175, 0.7) rgba(243, 244, 246, 0.5);
+        }
+        
+        .dark * {
+            scrollbar-color: rgba(75, 85, 99, 0.7) rgba(31, 41, 55, 0.5);
+        }
     </style>
 </head>
 <body class="text-gray-800 dark:text-gray-200 transition-colors duration-300">
@@ -364,6 +510,12 @@ HTML_TEMPLATE = """
                         <input id="search-input" type="text" placeholder="Keresés..." 
                                class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition">
                     </div>                    <div class="flex items-center space-x-3 ml-4">
+                        <!-- Chat Toggle Button -->
+                        <button id="chat-toggle" class="flex items-center justify-center w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition relative">
+                            <i class="fas fa-comments text-gray-600 dark:text-gray-400"></i>
+                            <span id="chat-notification" class="hidden absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></span>
+                        </button>
+                        
                         <!-- Mobile Theme Toggle - csak kis képernyőkön látható -->
                         <button id="mobile-theme-toggle" class="lg:hidden flex items-center justify-center w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition">
                             <i class="fas fa-moon dark:fa-sun text-gray-600 dark:text-gray-400"></i>
@@ -404,6 +556,55 @@ HTML_TEMPLATE = """
                 <p id="no-results" class="hidden text-center text-gray-500 mt-8">Nincs a keresésnek megfelelő fájl.</p>
             </div>
         </main>
+    </div>
+
+    <!-- Chat Modal -->
+    <div id="chat-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div class="card rounded-2xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl">
+            <header class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-comments text-xl text-gray-600 dark:text-gray-400"></i>
+                    <h3 class="font-semibold text-lg">Valós idejű chat</h3>
+                    <span id="online-users" class="text-sm text-gray-500 dark:text-gray-400">(1 online)</span>
+                </div>
+                <button id="chat-close" class="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white rounded-lg transition">
+                    <i class="fas fa-times"></i><span>Bezárás</span>
+                </button>
+            </header>
+            
+            <!-- Chat Messages Area -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 dark:bg-gray-900/50">
+                <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
+                    <i class="fas fa-comments text-2xl mb-2"></i>
+                    <p>Üdvözöl a DropFlow chat!</p>
+                    <p class="text-xs mt-1">Itt gyorsan küldhetsz jegyzeteket és üzeneteket.</p>
+                </div>
+            </div>
+            
+            <!-- Typing Indicator -->
+            <div id="typing-indicator" class="hidden px-4 py-2 text-sm text-gray-500 dark:text-gray-400 italic border-t border-gray-200 dark:border-gray-700">
+                <i class="fas fa-ellipsis-h fa-pulse"></i> <span id="typing-users"></span> gépel...
+            </div>
+            
+            <!-- Chat Input -->
+            <div class="border-t border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
+                <div class="flex items-center space-x-3 mb-3">
+                    <input id="username-input" type="text" placeholder="Neved..." 
+                           class="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition text-sm"
+                           maxlength="50">
+                </div>
+                <div class="flex items-end space-x-3">
+                    <textarea id="message-input" placeholder="Írj egy üzenetet..." 
+                              class="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition resize-none"
+                              rows="2" maxlength="1000"></textarea>
+                    <button id="send-message" class="px-4 py-2 bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 rounded-lg transition flex items-center space-x-2 h-fit">
+                        <i class="fas fa-paper-plane"></i>
+                        <span>Küldés</span>
+                    </button>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Enter = küldés, Shift+Enter = új sor</p>
+            </div>
+        </div>
     </div>
 
     <!-- Előnézeti Modal -->
@@ -1031,11 +1232,267 @@ HTML_TEMPLATE = """
                 clearInterval(this.pollingInterval);
                 this.pollingInterval = null;
                 console.log('File polling stopped');
-            }
-        }
+            }        }
     };
 
-    document.addEventListener('DOMContentLoaded', () => App.init());
+    // Chat funkcionalitás
+    const Chat = {
+        socket: null,
+        isOpen: false,
+        username: '',
+        typingTimeout: null,
+        isTyping: false,
+        unreadCount: 0,
+
+        init() {
+            this.cacheDOMElements();
+            this.bindEvents();
+            this.loadUsername();
+            this.initSocket();
+        },
+
+        cacheDOMElements() {
+            this.dom = {
+                chatToggle: document.getElementById('chat-toggle'),
+                chatModal: document.getElementById('chat-modal'),
+                chatClose: document.getElementById('chat-close'),
+                chatMessages: document.getElementById('chat-messages'),
+                usernameInput: document.getElementById('username-input'),
+                messageInput: document.getElementById('message-input'),
+                sendButton: document.getElementById('send-message'),
+                typingIndicator: document.getElementById('typing-indicator'),
+                typingUsers: document.getElementById('typing-users'),
+                chatNotification: document.getElementById('chat-notification'),
+                onlineUsers: document.getElementById('online-users')
+            };
+        },
+
+        bindEvents() {
+            this.dom.chatToggle.addEventListener('click', () => this.toggleChat());
+            this.dom.chatClose.addEventListener('click', () => this.closeChat());
+            this.dom.chatModal.addEventListener('click', (e) => {
+                if (e.target === this.dom.chatModal) this.closeChat();
+            });
+
+            this.dom.usernameInput.addEventListener('input', () => this.saveUsername());
+            this.dom.messageInput.addEventListener('keydown', (e) => this.handleKeyDown(e));
+            this.dom.messageInput.addEventListener('input', () => this.handleTyping());
+            this.dom.sendButton.addEventListener('click', () => this.sendMessage());
+            
+            document.addEventListener('keydown', (e) => {
+                if (e.key === "Escape" && this.isOpen) this.closeChat();
+            });
+        },
+
+        loadUsername() {
+            const savedUsername = localStorage.getItem('chat-username');
+            if (savedUsername) {
+                this.username = savedUsername;
+                this.dom.usernameInput.value = savedUsername;
+            } else {
+                // Generálj egy random nevet
+                const adjectives = ['Gyors', 'Okos', 'Kedves', 'Ügyes', 'Kreatív', 'Bátor'];
+                const nouns = ['Felhasználó', 'Látogató', 'Vendég', 'User', 'Ember', 'Barát'];
+                const randomName = adjectives[Math.floor(Math.random() * adjectives.length)] + 
+                                 nouns[Math.floor(Math.random() * nouns.length)] + 
+                                 Math.floor(Math.random() * 100);
+                this.username = randomName;
+                this.dom.usernameInput.value = randomName;
+                this.saveUsername();
+            }
+        },
+
+        saveUsername() {
+            this.username = this.dom.usernameInput.value.trim() || 'Névtelen';
+            localStorage.setItem('chat-username', this.username);
+        },
+
+        initSocket() {
+            try {
+                this.socket = io();
+                
+                this.socket.on('connect', () => {
+                    console.log('Chat kapcsolat létrejött');
+                });
+
+                this.socket.on('disconnect', () => {
+                    console.log('Chat kapcsolat megszakadt');
+                });
+
+                this.socket.on('previous_messages', (data) => {
+                    this.loadPreviousMessages(data.messages);
+                });
+
+                this.socket.on('new_message', (message) => {
+                    this.addMessage(message);
+                    if (!this.isOpen) {
+                        this.showNotification();
+                    }
+                });
+
+                this.socket.on('user_typing', (data) => {
+                    this.showTyping(data.username);
+                });
+
+                this.socket.on('user_stop_typing', (data) => {
+                    this.hideTyping(data.username);
+                });
+                
+            } catch (error) {
+                console.error('Chat kapcsolódási hiba:', error);
+            }
+        },
+
+        toggleChat() {
+            if (this.isOpen) {
+                this.closeChat();
+            } else {
+                this.openChat();
+            }
+        },
+
+        openChat() {
+            this.isOpen = true;
+            this.dom.chatModal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            this.dom.messageInput.focus();
+            this.clearNotification();
+            this.scrollToBottom();
+        },
+
+        closeChat() {
+            this.isOpen = false;
+            this.dom.chatModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        },
+
+        loadPreviousMessages(messages) {
+            this.dom.chatMessages.innerHTML = '';
+            
+            if (messages.length === 0) {
+                this.dom.chatMessages.innerHTML = `
+                    <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
+                        <i class="fas fa-comments text-2xl mb-2"></i>
+                        <p>Üdvözöl a DropFlow chat!</p>
+                        <p class="text-xs mt-1">Itt gyorsan küldhetsz jegyzeteket és üzeneteket.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            messages.forEach(message => this.addMessage(message, false));
+            this.scrollToBottom();
+        },
+
+        addMessage(message, shouldScroll = true) {
+            const isOwnMessage = message.username === this.username;
+            
+            const messageElement = document.createElement('div');
+            messageElement.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`;
+            
+            messageElement.innerHTML = `
+                <div class="max-w-xs lg:max-w-md px-3 py-2 rounded-lg ${
+                    isOwnMessage 
+                        ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900' 
+                        : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                }">
+                    ${!isOwnMessage ? `<p class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">${this.escapeHtml(message.username)}</p>` : ''}
+                    <p class="text-sm break-words">${this.escapeHtml(message.message)}</p>
+                    <p class="text-xs opacity-70 mt-1 ${isOwnMessage ? 'text-right' : 'text-left'}">${message.formatted_time}</p>
+                </div>
+            `;
+            
+            this.dom.chatMessages.appendChild(messageElement);
+            
+            if (shouldScroll) {
+                this.scrollToBottom();
+            }
+        },
+
+        handleKeyDown(e) {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) {
+                    // Shift+Enter = új sor, ne küldjük el
+                    return;
+                } else {
+                    // Enter = küldés
+                    e.preventDefault();
+                    this.sendMessage();
+                }
+            }
+        },
+
+        handleTyping() {
+            if (!this.isTyping) {
+                this.isTyping = true;
+                this.socket.emit('typing', { username: this.username });
+            }
+
+            // Reset typing timeout
+            clearTimeout(this.typingTimeout);
+            this.typingTimeout = setTimeout(() => {
+                this.isTyping = false;
+                this.socket.emit('stop_typing', { username: this.username });
+            }, 1000);
+        },
+
+        sendMessage() {
+            const message = this.dom.messageInput.value.trim();
+            if (!message) return;
+
+            this.saveUsername();
+
+            this.socket.emit('send_message', {
+                message: message,
+                username: this.username
+            });
+
+            this.dom.messageInput.value = '';
+            
+            // Állítsd le a gépelés jelzést
+            if (this.isTyping) {
+                this.isTyping = false;
+                this.socket.emit('stop_typing', { username: this.username });
+                clearTimeout(this.typingTimeout);
+            }
+        },
+
+        showTyping(username) {
+            this.dom.typingUsers.textContent = username;
+            this.dom.typingIndicator.classList.remove('hidden');
+            this.scrollToBottom();
+        },
+
+        hideTyping(username) {
+            // Egyszerűsítjük: ha bárki abbahagyja a gépelést, elrejtjük az indikátort
+            this.dom.typingIndicator.classList.add('hidden');
+        },
+
+        showNotification() {
+            this.unreadCount++;
+            this.dom.chatNotification.classList.remove('hidden');
+        },
+
+        clearNotification() {
+            this.unreadCount = 0;
+            this.dom.chatNotification.classList.add('hidden');
+        },
+
+        scrollToBottom() {
+            setTimeout(() => {
+                this.dom.chatMessages.scrollTop = this.dom.chatMessages.scrollHeight;
+            }, 100);
+        },
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    };    document.addEventListener('DOMContentLoaded', () => {
+        App.init();
+        Chat.init();
+    });
 </script>
 </body>
 </html>
@@ -1211,6 +1668,23 @@ def api_files_check():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/chat/messages')
+def api_chat_messages():
+    """API endpoint to get chat messages."""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        limit = min(limit, 100)  # Maximum 100 üzenet
+        
+        messages = chat_messages[-limit:] if chat_messages else []
+        
+        return jsonify({
+            'messages': messages,
+            'count': len(messages),
+            'total_count': len(chat_messages)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # --- Szerver Indítása ---
 if __name__ == '__main__':
     if not os.path.exists(UPLOAD_FOLDER):
@@ -1221,7 +1695,8 @@ if __name__ == '__main__':
     print("  DropFlow - elindult!")
     print("  Nyisd meg a böngésződben vagy olvasd be a QR kódot:")
     print(f"  -> http://{local_ip}:{PORT}")
+    print("  Chat funkció engedélyezve!")
     print("*" * 60)
     
-    # A debug=False fontos élesebb környezetben, de a fejlesztéshez hasznos a True
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    # SocketIO szerver indítása
+    socketio.run(app, host='0.0.0.0', port=PORT, debug=False, allow_unsafe_werkzeug=True)
