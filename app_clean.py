@@ -556,24 +556,20 @@ HTML_TEMPLATE = """
                 <p id="no-results" class="hidden text-center text-gray-500 mt-8">Nincs a keresésnek megfelelő fájl.</p>
             </div>
         </main>
-    </div>
-
-    <!-- Chat Modal -->
-    <div id="chat-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div class="card rounded-2xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl">
-            <header class="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                <div class="flex items-center space-x-3">
-                    <i class="fas fa-comments text-xl text-gray-600 dark:text-gray-400"></i>
-                    <h3 class="font-semibold text-lg">Valós idejű chat</h3>
-                    <span id="online-users" class="text-sm text-gray-500 dark:text-gray-400">(1 online)</span>
+    </div>    <!-- Chat Modal -->
+    <div id="chat-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+        <div class="card rounded-2xl w-full max-w-2xl h-[90vh] sm:h-[80vh] flex flex-col shadow-2xl">
+            <header class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                <div class="flex items-center space-x-2 sm:space-x-3">
+                    <i class="fas fa-comments text-lg sm:text-xl text-gray-600 dark:text-gray-400"></i>
+                    <h3 class="font-semibold text-base sm:text-lg">Valós idejű chat</h3>
                 </div>
-                <button id="chat-close" class="flex items-center space-x-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white rounded-lg transition">
-                    <i class="fas fa-times"></i><span>Bezárás</span>
+                <button id="chat-close" class="flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white rounded-lg transition">
+                    <i class="fas fa-times"></i><span class="hidden sm:inline">Bezárás</span>
                 </button>
             </header>
-            
-            <!-- Chat Messages Area -->
-            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 dark:bg-gray-900/50">
+              <!-- Chat Messages Area -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 bg-gray-50 dark:bg-gray-900/50">
                 <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
                     <i class="fas fa-comments text-2xl mb-2"></i>
                     <p>Üdvözöl a DropFlow chat!</p>
@@ -582,24 +578,24 @@ HTML_TEMPLATE = """
             </div>
             
             <!-- Typing Indicator -->
-            <div id="typing-indicator" class="hidden px-4 py-2 text-sm text-gray-500 dark:text-gray-400 italic border-t border-gray-200 dark:border-gray-700">
+            <div id="typing-indicator" class="hidden px-3 sm:px-4 py-2 text-sm text-gray-500 dark:text-gray-400 italic border-t border-gray-200 dark:border-gray-700">
                 <i class="fas fa-ellipsis-h fa-pulse"></i> <span id="typing-users"></span> gépel...
             </div>
             
             <!-- Chat Input -->
-            <div class="border-t border-gray-200 dark:border-gray-700 p-4 flex-shrink-0">
-                <div class="flex items-center space-x-3 mb-3">
+            <div class="border-t border-gray-200 dark:border-gray-700 p-3 sm:p-4 flex-shrink-0">
+                <div class="flex items-center space-x-2 sm:space-x-3 mb-3">
                     <input id="username-input" type="text" placeholder="Neved..." 
                            class="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition text-sm"
                            maxlength="50">
                 </div>
-                <div class="flex items-end space-x-3">
+                <div class="flex items-end space-x-2 sm:space-x-3">
                     <textarea id="message-input" placeholder="Írj egy üzenetet..." 
-                              class="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition resize-none"
+                              class="flex-1 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition resize-none text-sm"
                               rows="2" maxlength="1000"></textarea>
-                    <button id="send-message" class="px-4 py-2 bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 rounded-lg transition flex items-center space-x-2 h-fit">
+                    <button id="send-message" class="px-3 sm:px-4 py-2 bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 rounded-lg transition flex items-center space-x-1 sm:space-x-2 h-fit">
                         <i class="fas fa-paper-plane"></i>
-                        <span>Küldés</span>
+                        <span class="hidden sm:inline">Küldés</span>
                     </button>
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Enter = küldés, Shift+Enter = új sor</p>
@@ -1249,9 +1245,7 @@ HTML_TEMPLATE = """
             this.bindEvents();
             this.loadUsername();
             this.initSocket();
-        },
-
-        cacheDOMElements() {
+        },        cacheDOMElements() {
             this.dom = {
                 chatToggle: document.getElementById('chat-toggle'),
                 chatModal: document.getElementById('chat-modal'),
@@ -1262,8 +1256,7 @@ HTML_TEMPLATE = """
                 sendButton: document.getElementById('send-message'),
                 typingIndicator: document.getElementById('typing-indicator'),
                 typingUsers: document.getElementById('typing-users'),
-                chatNotification: document.getElementById('chat-notification'),
-                onlineUsers: document.getElementById('online-users')
+                chatNotification: document.getElementById('chat-notification')
             };
         },
 
@@ -1349,12 +1342,13 @@ HTML_TEMPLATE = """
             } else {
                 this.openChat();
             }
-        },
-
-        openChat() {
+        },        openChat() {
             this.isOpen = true;
             this.dom.chatModal.classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
+            // Only prevent body scroll on larger screens
+            if (window.innerWidth >= 640) {
+                document.body.style.overflow = 'hidden';
+            }
             this.dom.messageInput.focus();
             this.clearNotification();
             this.scrollToBottom();
@@ -1382,16 +1376,14 @@ HTML_TEMPLATE = """
 
             messages.forEach(message => this.addMessage(message, false));
             this.scrollToBottom();
-        },
-
-        addMessage(message, shouldScroll = true) {
+        },        addMessage(message, shouldScroll = true) {
             const isOwnMessage = message.username === this.username;
             
             const messageElement = document.createElement('div');
             messageElement.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`;
             
             messageElement.innerHTML = `
-                <div class="max-w-xs lg:max-w-md px-3 py-2 rounded-lg ${
+                <div class="max-w-[85%] sm:max-w-xs lg:max-w-md px-3 py-2 rounded-lg ${
                     isOwnMessage 
                         ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900' 
                         : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
