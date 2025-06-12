@@ -26,6 +26,14 @@
 - **Értesítések** - Új üzenetek jelzése
 - **Felhasználónév kezelés** - Személyre szabható azonosítás
 
+### 📝 **Kollaboratív Jegyzetfüzet**
+- **Valós idejű szinkronizálás** - Együttműködés több felhasználóval
+- **Automatikus mentés** - Tartalom automatikus megőrzése
+- **Mentett jegyzetek kezelése** - Jegyzetkönyvtár rendszerezéssel
+- **Azonnali másolás** - Egy kattintással vágólapra
+- **Billentyűkombinációk** - Ctrl+S (mentés), Ctrl+N (új), Esc (bezárás)
+- **Karakterszámláló** - Valós idejű szövegstatisztika
+
 ### 📱 **Hálózati Funkcók**
 - **QR kód generálás** - Könnyű mobilos hozzáférés
 - **Helyi IP felderítés** - Automatikus hálózati konfiguráció
@@ -102,20 +110,33 @@ python app_clean.py
 - **Értesítések:** Piros pont jelzi az új üzeneteket
 - **Gépelés jelzés:** Láthatod, amikor mások éppen gépelnek
 
+### **Jegyzetfüzet használata**
+- **Jegyzetfüzet megnyitása:** Kattints a jegyzetfüzet ikonra a fejlécben
+- **Valós idejű együttműködés:** Több felhasználó egyszerre szerkeszthet
+- **Automatikus szinkronizálás:** Változások azonnal megjelennek másoknál
+- **Jegyzet mentése:** Ctrl+S vagy a Mentés gomb (egyedi névvel)
+- **Új jegyzet:** Ctrl+N vagy az Új gomb
+- **Másolás vágólapra:** Másolás gomb vagy teljes tartalom kijelölése
+- **Mentett jegyzetek:** Oldalsó panel a korábbi jegyzetekkel
+- **Jegyzet törlése:** Törlés gomb a mentett jegyzetek mellett
+
 ## 🔧 Konfiguráció
 
 ### **Alapbeállítások**
 ```python
 UPLOAD_FOLDER = 'uploads'    # Feltöltési könyvtár
+DATA_FOLDER = 'data'         # Adatfájlok könyvtára (chat, notes)
 PORT = 5000                  # Szerver port
 MAX_CONTENT_LENGTH = 16GB    # Max fájlméret
 MAX_MESSAGES = 100           # Chat üzenetek max száma memóriában
 ```
 
-### **Chat beállítások**
+### **Chat és Jegyzetek beállítások**
 ```python
 SECRET_KEY = 'dropflow-chat-secret-key'  # SocketIO titkos kulcs
 CORS_ALLOWED_ORIGINS = "*"               # CORS beállítások
+NOTES_FILE = 'data/notes.json'           # Aktuális jegyzet fájl
+SAVED_NOTES_FILE = 'data/saved_notes.json'  # Mentett jegyzetek fájl
 ```
 
 ### **Támogatott fájltípusok**
@@ -134,6 +155,13 @@ CORS_ALLOWED_ORIGINS = "*"               # CORS beállítások
 - Gépelés jelzés és online státusz
 - Üzenet előzmények megőrzése (memóriában)
 - Automatikus felhasználónév generálás
+
+### **Kollaboratív Jegyzetfüzet Rendszer**
+- Socket.IO alapú valós idejű szinkronizálás
+- Többfelhasználós együttműködés egyazon jegyzeten
+- Automatikus tartalom mentés JSON fájlokba
+- Mentett jegyzetkönyvtár rendszerezéssel
+- Karakterszámláló és státusz jelzések
 
 ### **Élő Rendszermonitorozás**
 - 5 másodpercenként frissülő rendszeradatok
@@ -169,7 +197,10 @@ File_sharer/
 ├── app_clean.py          # Főalkalmazás
 ├── requirements.txt      # Python függőségek
 ├── README.md            # Dokumentáció
-└── uploads/             # Feltöltött fájlok
+├── uploads/             # Feltöltött fájlok
+└── data/                # Adatfájlok
+    ├── notes.json       # Aktuális jegyzet
+    └── saved_notes.json # Mentett jegyzetek
 ```
 
 ### **Testre szabás**
@@ -188,13 +219,13 @@ Minden fejlesztési javaslat és hozzájárulás üdvözölt!
 ---
 
 **Készítette:** Vajda Norman 
-**Verzió:** 3.0  
-**Frissítve:** 2025.06.09
+**Verzió:** 4.0  
+**Frissítve:** 2025.06.12
 
-### 🆕 Legújabb változások (v3.0)
-- ✅ **Valós idejű chat rendszer** Socket.IO-val
-- ✅ **Keresztplatform szinkronizálás** automatikus fájllista frissítéssel
-- ✅ **Fejlett előnézetek** waveform és syntax highlighting
-- ✅ **Intelligens értesítések** fájl és chat változásokról
-- ✅ **Optimalizált UX** adaptive polling és responsive design
-- ✅ **16GB fájlméret támogatás** nagyobb fájlokhoz
+### 🆕 Legújabb változások (v4.0)
+- ✅ **Valós idejű kollaboratív jegyzetfüzet** Socket.IO-val
+- ✅ **Többfelhasználós jegyzetszerkesztés** azonnali szinkronizációval
+- ✅ **Mentett jegyzetkönyvtár** rendszerezett tárolással
+- ✅ **Automatikus tartalom mentés** JSON alapú perzisztenciával
+- ✅ **Billentyűkombinációk** gyors műveletek számára
+- ✅ **Karakterszámláló és státusz** valós idejű visszajelzéssel

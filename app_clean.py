@@ -14,6 +14,9 @@ from io import BytesIO
 
 # --- Konfiguráció ---
 UPLOAD_FOLDER = 'uploads'
+DATA_FOLDER = 'data'
+NOTES_FILE = os.path.join(DATA_FOLDER, 'notes.json')
+SAVED_NOTES_FILE = os.path.join(DATA_FOLDER, 'saved_notes.json')
 PORT = 5000
 
 app = Flask(__name__)
@@ -37,6 +40,54 @@ def get_local_ip():
     except Exception: IP = '127.0.0.1'
     finally: s.close()
     return IP
+
+def load_notes():
+    """Betölti a jegyzeteket a JSON fájlból"""
+    try:
+        if os.path.exists(NOTES_FILE):
+            with open(NOTES_FILE, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if content:
+                    return json.loads(content)
+        return {'current_note': '', 'created_at': None, 'updated_at': None}
+    except Exception as e:
+        print(f"Hiba a jegyzet betöltésekor: {e}")
+        return {'current_note': '', 'created_at': None, 'updated_at': None}
+
+def save_notes(notes_data):
+    """Elmenti a jegyzeteket a JSON fájlba"""
+    try:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        with open(NOTES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(notes_data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"Hiba a jegyzet mentésekor: {e}")
+        return False
+
+def load_saved_notes():
+    """Betölti a mentett jegyzeteket a JSON fájlból"""
+    try:
+        if os.path.exists(SAVED_NOTES_FILE):
+            with open(SAVED_NOTES_FILE, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if content:
+                    return json.loads(content)
+        return []
+    except Exception as e:
+        print(f"Hiba a mentett jegyzetek betöltésekor: {e}")
+        return []
+
+def save_saved_notes(saved_notes):
+    """Elmenti a mentett jegyzeteket a JSON fájlba"""
+    try:
+        os.makedirs(DATA_FOLDER, exist_ok=True)
+        with open(SAVED_NOTES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(saved_notes, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"Hiba a mentett jegyzetek mentésekor: {e}")
+        return False
 
 def get_storage_info():
     """Returns storage information for the current drive"""
@@ -205,6 +256,124 @@ def handle_stop_typing(data):
         socketio.emit('user_stop_typing', {'username': username}, room='main_chat', include_self=False)
     except Exception as e:
         print(f'Hiba a gépelés leállítás kezelésekor: {e}')
+
+# --- Notes WebSocket események ---
+
+@socketio.on('join_notes')
+def handle_join_notes():
+    """Felhasználó csatlakozása a jegyzet szobához"""
+    join_room('notes_room')
+    print('Felhasználó csatlakozott a jegyzet szobához')
+
+@socketio.on('leave_notes')
+def handle_leave_notes():
+    """Felhasználó kilépése a jegyzet szobából"""
+    leave_room('notes_room')
+    print('Felhasználó kilépett a jegyzet szobából')
+
+@socketio.on('notes_content_change')
+def handle_notes_content_change(data):
+    """Jegyzet tartalom változás kezelése"""
+    try:
+        content = data.get('content', '')
+        cursor_position = data.get('cursor_position', 0)
+        username = data.get('username', 'Névtelen')
+        
+        # Mentés a notes.json fájlba
+        notes_data = {
+            'current_note': content,
+            'updated_at': datetime.now().isoformat(),
+            'last_editor': username
+        }
+        save_notes(notes_data)
+        
+        # Broadcast a változást minden csatlakozott felhasználónak (kivéve a küldőt)
+        socketio.emit('notes_content_updated', {
+            'content': content,
+            'cursor_position': cursor_position,
+            'username': username,
+            'timestamp': datetime.now().isoformat()
+        }, room='notes_room', include_self=False)
+        
+    except Exception as e:
+        print(f'Hiba a jegyzet tartalom kezelésekor: {e}')
+
+@socketio.on('notes_cursor_change')
+def handle_notes_cursor_change(data):
+    """Kurzor pozíció változás kezelése"""
+    try:
+        cursor_position = data.get('cursor_position', 0)
+        username = data.get('username', 'Névtelen')
+        
+        # Broadcast a kurzor pozíciót
+        socketio.emit('notes_cursor_updated', {
+            'cursor_position': cursor_position,
+            'username': username
+        }, room='notes_room', include_self=False)
+        
+    except Exception as e:
+        print(f'Hiba a kurzor pozíció kezelésekor: {e}')
+
+@socketio.on('notes_save')
+def handle_notes_save(data):
+    """Jegyzet mentés kezelése"""
+    try:
+        note_data = data.get('note_data')
+        if not note_data:
+            return
+            
+        # Betöltés és mentés
+        saved_notes = load_saved_notes()
+        
+        # Ellenőrizzük, hogy már létezik-e az ID
+        existing_index = -1
+        for i, note in enumerate(saved_notes):
+            if note.get('id') == note_data.get('id'):
+                existing_index = i
+                break
+        
+        if existing_index >= 0:
+            # Frissítés
+            saved_notes[existing_index] = note_data
+        else:
+            # Új jegyzet hozzáadása
+            saved_notes.append(note_data)
+        
+        # Mentés fájlba
+        if save_saved_notes(saved_notes):
+            # Broadcast az összes felhasználónak
+            socketio.emit('notes_saved_updated', {
+                'notes': saved_notes,
+                'action': 'save',
+                'note': note_data
+            }, room='notes_room')
+        
+    except Exception as e:
+        print(f'Hiba a jegyzet mentésekor: {e}')
+
+@socketio.on('notes_delete')
+def handle_notes_delete(data):
+    """Jegyzet törlés kezelése"""
+    try:
+        note_id = data.get('note_id')
+        if not note_id:
+            return
+            
+        # Betöltés és törlés
+        saved_notes = load_saved_notes()
+        saved_notes = [note for note in saved_notes if note.get('id') != note_id]
+        
+        # Mentés fájlba
+        if save_saved_notes(saved_notes):
+            # Broadcast az összes felhasználónak
+            socketio.emit('notes_saved_updated', {
+                'notes': saved_notes,
+                'action': 'delete',
+                'deleted_id': note_id
+            }, room='notes_room')
+        
+    except Exception as e:
+        print(f'Hiba a jegyzet törlésekor: {e}')
 
 
 # --- HTML & JS Sablon ---
@@ -510,6 +679,11 @@ HTML_TEMPLATE = """
                         <input id="search-input" type="text" placeholder="Keresés..." 
                                class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition">
                     </div>                    <div class="flex items-center space-x-3 ml-4">
+                        <!-- Notes Toggle Button -->
+                        <button id="notes-toggle" class="flex items-center justify-center w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition" title="Jegyzetfüzet">
+                            <i class="fas fa-sticky-note text-gray-600 dark:text-gray-400"></i>
+                        </button>
+                        
                         <!-- Chat Toggle Button -->
                         <button id="chat-toggle" class="flex items-center justify-center w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition relative">
                             <i class="fas fa-comments text-gray-600 dark:text-gray-400"></i>
@@ -599,6 +773,70 @@ HTML_TEMPLATE = """
                     </button>
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Enter = küldés, Shift+Enter = új sor</p>
+            </div>        </div>
+    </div>
+
+    <!-- Notes Modal -->
+    <div id="notes-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+        <div class="card rounded-2xl w-full max-w-4xl h-[90vh] sm:h-[85vh] flex flex-col shadow-2xl">
+            <header class="flex items-center justify-between p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                <div class="flex items-center space-x-2 sm:space-x-3">
+                    <i class="fas fa-sticky-note text-lg sm:text-xl text-gray-600 dark:text-gray-400"></i>
+                    <h3 class="font-semibold text-base sm:text-lg">Jegyzetfüzet</h3>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button id="notes-copy" class="flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-2 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-900 dark:text-blue-100 rounded-lg transition" title="Jegyzet másolása">
+                        <i class="fas fa-copy"></i><span class="hidden sm:inline">Másolás</span>
+                    </button>
+                    <button id="notes-close" class="flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-900 dark:text-white rounded-lg transition">
+                        <i class="fas fa-times"></i><span class="hidden sm:inline">Bezárás</span>
+                    </button>
+                </div>
+            </header>
+            
+            <div class="flex flex-1 overflow-hidden">
+                <!-- Saved Notes Sidebar -->
+                <div class="w-64 border-r border-gray-200 dark:border-gray-700 flex flex-col bg-gray-50 dark:bg-gray-900/50">
+                    <div class="p-3 border-b border-gray-200 dark:border-gray-700">
+                        <h4 class="font-medium text-sm text-gray-700 dark:text-gray-300 mb-2">Mentett jegyzetek</h4>
+                        <div class="flex space-x-1">
+                            <button id="save-note" class="flex-1 px-2 py-1 bg-green-100 dark:bg-green-900 hover:bg-green-200 dark:hover:bg-green-800 text-green-900 dark:text-green-100 rounded text-xs transition">
+                                <i class="fas fa-save mr-1"></i>Mentés
+                            </button>
+                            <button id="new-note" class="flex-1 px-2 py-1 bg-blue-100 dark:bg-blue-900 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-900 dark:text-blue-100 rounded text-xs transition">
+                                <i class="fas fa-plus mr-1"></i>Új
+                            </button>
+                        </div>
+                    </div>
+                    <div id="saved-notes-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+                        <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+                            <i class="fas fa-sticky-note text-2xl mb-2"></i>
+                            <p>Még nincsenek mentett jegyzetek</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Notes Editor -->
+                <div class="flex-1 flex flex-col">
+                    <div class="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span id="note-status">Nincs betöltve jegyzet</span>
+                            <span id="note-info"></span>
+                        </div>
+                    </div>
+                    <div class="flex-1 p-3">
+                        <textarea id="notes-editor" 
+                                  placeholder="Kezdj el írni a jegyzeteidet..."
+                                  class="w-full h-full p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:outline-none transition resize-none text-sm font-mono"
+                                  spellcheck="false"></textarea>
+                    </div>
+                    <div class="p-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span>Ctrl+S = gyors mentés, Ctrl+N = új jegyzet</span>
+                            <span id="char-count">0 karakter</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -642,7 +880,7 @@ HTML_TEMPLATE = """
             this.renderFiles();
             this.startSystemMonitoring();
             this.startFilePolling();
-        },cacheDOMElements() {
+        },        cacheDOMElements() {
             this.dom = {
                 themeToggle: document.getElementById('theme-toggle'),
                 themeToggleDesktop: document.getElementById('theme-toggle-desktop'),
@@ -663,6 +901,7 @@ HTML_TEMPLATE = """
                 previewClose: document.getElementById('preview-close'),
                 previewLoader: document.getElementById('preview-loader'),
                 previewContent: document.getElementById('preview-content'),
+                notesToggle: document.getElementById('notes-toggle'),
             };
         },        bindEvents() {
             this.dom.themeToggle.addEventListener('click', this.toggleTheme.bind(this));
@@ -684,6 +923,9 @@ HTML_TEMPLATE = """
             this.dom.previewClose.addEventListener('click', this.closePreview.bind(this));
             this.dom.previewModal.addEventListener('click', (e) => { if (e.target === this.dom.previewModal) this.closePreview(); });
             document.addEventListener('keydown', (e) => { if (e.key === "Escape") this.closePreview(); });
+
+            // Notes toggle
+            this.dom.notesToggle.addEventListener('click', () => Notes.toggleNotes());
         },
 
         initTheme() {
@@ -1478,12 +1720,452 @@ HTML_TEMPLATE = """
 
         escapeHtml(text) {
             const div = document.createElement('div');
+            div.textContent = text;            return div.innerHTML;
+        }
+    };    // Notes funkcionalitás
+    const Notes = {
+        isOpen: false,
+        currentNote: '',
+        savedNotes: [],
+        currentNoteId: null,
+        hasUnsavedChanges: false,
+        socket: null,
+        lastCursorPosition: 0,
+        isReceivingUpdate: false,
+        username: '',
+
+        init() {
+            this.cacheDOMElements();
+            this.bindEvents();
+            this.loadSavedNotes();
+            this.loadCurrentNote();
+            this.initSocket();
+            this.loadUsername();
+        },
+
+        cacheDOMElements() {
+            this.dom = {
+                notesModal: document.getElementById('notes-modal'),
+                notesClose: document.getElementById('notes-close'),
+                notesCopy: document.getElementById('notes-copy'),
+                notesEditor: document.getElementById('notes-editor'),
+                saveNote: document.getElementById('save-note'),
+                newNote: document.getElementById('new-note'),
+                savedNotesList: document.getElementById('saved-notes-list'),
+                noteStatus: document.getElementById('note-status'),
+                noteInfo: document.getElementById('note-info'),
+                charCount: document.getElementById('char-count')
+            };
+        },
+
+        bindEvents() {
+            this.dom.notesClose.addEventListener('click', () => this.closeNotes());
+            this.dom.notesModal.addEventListener('click', (e) => {
+                if (e.target === this.dom.notesModal) this.closeNotes();
+            });
+
+            this.dom.notesCopy.addEventListener('click', () => this.copyNoteToClipboard());
+            this.dom.saveNote.addEventListener('click', () => this.saveCurrentNote());
+            this.dom.newNote.addEventListener('click', () => this.createNewNote());
+
+            let inputTimeout;
+            this.dom.notesEditor.addEventListener('input', () => {
+                if (this.isReceivingUpdate) return;
+                
+                this.handleEditorChange();
+                
+                // Debounce a realtime frissítést
+                clearTimeout(inputTimeout);
+                inputTimeout = setTimeout(() => {
+                    this.sendContentUpdate();
+                }, 300);
+            });
+
+            this.dom.notesEditor.addEventListener('selectionchange', () => {
+                this.handleCursorChange();
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.key === "Escape" && this.isOpen) {
+                    this.closeNotes();
+                } else if (e.ctrlKey && e.key === 's' && this.isOpen) {
+                    e.preventDefault();
+                    this.saveCurrentNote();
+                } else if (e.ctrlKey && e.key === 'n' && this.isOpen) {
+                    e.preventDefault();
+                    this.createNewNote();
+                }
+            });
+        },
+
+        loadUsername() {
+            // Használjuk a Chat modul felhasználónevét, ha van
+            if (typeof Chat !== 'undefined' && Chat.username) {
+                this.username = Chat.username;
+            } else {
+                const savedUsername = localStorage.getItem('chat-username');
+                if (savedUsername) {
+                    this.username = savedUsername;
+                } else {
+                    this.username = 'Felhasználó' + Math.floor(Math.random() * 1000);
+                }
+            }
+        },
+
+        initSocket() {
+            try {
+                // Használjuk a Chat modul socket-jét ha létezik
+                if (typeof Chat !== 'undefined' && Chat.socket) {
+                    this.socket = Chat.socket;
+                } else {
+                    this.socket = io();
+                }
+
+                // Notes specifikus események
+                this.socket.on('notes_content_updated', (data) => {
+                    this.handleRemoteContentUpdate(data);
+                });
+
+                this.socket.on('notes_cursor_updated', (data) => {
+                    this.handleRemoteCursorUpdate(data);
+                });
+
+                this.socket.on('notes_saved_updated', (data) => {
+                    this.handleSavedNotesUpdate(data);
+                });
+
+            } catch (error) {
+                console.error('Notes socket kapcsolódási hiba:', error);
+            }
+        },
+
+        toggleNotes() {
+            if (this.isOpen) {
+                this.closeNotes();
+            } else {
+                this.openNotes();
+            }
+        },
+
+        openNotes() {
+            this.isOpen = true;
+            this.dom.notesModal.classList.remove('hidden');
+            if (window.innerWidth >= 640) {
+                document.body.style.overflow = 'hidden';
+            }
+            this.dom.notesEditor.focus();
+            this.updateCharCount();
+            
+            // Csatlakozás a notes szobához
+            if (this.socket) {
+                this.socket.emit('join_notes');
+            }
+        },
+
+        closeNotes() {
+            if (this.hasUnsavedChanges) {
+                if (!confirm('Vannak nem mentett változások. Biztosan be akarod zárni?')) {
+                    return;
+                }
+            }
+            this.isOpen = false;
+            this.dom.notesModal.classList.add('hidden');
+            document.body.style.overflow = 'auto';
+            
+            // Kilépés a notes szobából
+            if (this.socket) {
+                this.socket.emit('leave_notes');
+            }
+        },
+
+        handleEditorChange() {
+            const content = this.dom.notesEditor.value;
+            this.currentNote = content;
+            this.hasUnsavedChanges = true;
+            this.updateStatus();
+            this.updateCharCount();
+        },
+
+        sendContentUpdate() {
+            if (this.socket && !this.isReceivingUpdate) {
+                const cursorPosition = this.dom.notesEditor.selectionStart;
+                this.socket.emit('notes_content_change', {
+                    content: this.currentNote,
+                    cursor_position: cursorPosition,
+                    username: this.username
+                });
+            }
+        },
+
+        handleCursorChange() {
+            const cursorPosition = this.dom.notesEditor.selectionStart;
+            if (cursorPosition !== this.lastCursorPosition) {
+                this.lastCursorPosition = cursorPosition;
+                if (this.socket && !this.isReceivingUpdate) {
+                    this.socket.emit('notes_cursor_change', {
+                        cursor_position: cursorPosition,
+                        username: this.username
+                    });
+                }
+            }
+        },
+
+        handleRemoteContentUpdate(data) {
+            if (data.username === this.username) return; // Saját frissítés
+            
+            this.isReceivingUpdate = true;
+            const oldCursor = this.dom.notesEditor.selectionStart;
+            
+            this.currentNote = data.content;
+            this.dom.notesEditor.value = data.content;
+            
+            // Próbáljuk megőrizni a kurzor pozíciót
+            this.dom.notesEditor.setSelectionRange(oldCursor, oldCursor);
+            
+            this.updateCharCount();
+            this.updateStatus();
+            
+            // Mutassuk, hogy ki szerkeszti
+            this.dom.noteStatus.textContent = `${data.username} szerkeszti...`;
+            
+            setTimeout(() => {
+                this.isReceivingUpdate = false;
+                this.updateStatus();
+            }, 1000);
+        },
+
+        handleRemoteCursorUpdate(data) {
+            // Itt lehetne megjeleníteni más felhasználók kurzor pozícióját
+            // Ezt egyszerűbb implementációnál kihagyjuk
+        },
+
+        handleSavedNotesUpdate(data) {
+            this.savedNotes = data.notes;
+            this.renderSavedNotes();
+            
+            if (data.action === 'save') {
+                App.showNotification(`${data.note.title} jegyzet mentve!`, 'info');
+            } else if (data.action === 'delete') {
+                App.showNotification('Jegyzet törölve!', 'info');
+                
+                // Ha az éppen betöltött jegyzetet törölték
+                if (this.currentNoteId === data.deleted_id) {
+                    this.currentNoteId = null;
+                    this.updateStatus();
+                    this.dom.noteInfo.textContent = '';
+                }
+            }
+        },
+
+        updateStatus() {
+            if (this.isReceivingUpdate) return;
+            
+            if (this.currentNoteId) {
+                this.dom.noteStatus.textContent = this.hasUnsavedChanges ? 
+                    'Szerkesztés alatt - nem mentett változások' : 'Mentett jegyzet betöltve';
+            } else {
+                this.dom.noteStatus.textContent = this.hasUnsavedChanges ? 
+                    'Új jegyzet - nem mentett' : 'Nincs betöltve jegyzet';
+            }
+        },
+
+        updateCharCount() {
+            const count = this.dom.notesEditor.value.length;
+            this.dom.charCount.textContent = `${count} karakter`;
+        },
+
+        async loadCurrentNote() {
+            try {
+                const response = await fetch('/api/notes/current');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.currentNote = data.current_note || '';
+                    this.dom.notesEditor.value = this.currentNote;
+                    this.hasUnsavedChanges = false;
+                    this.updateStatus();
+                    this.updateCharCount();
+                    
+                    if (data.updated_at) {
+                        const date = new Date(data.updated_at);
+                        const editor = data.last_editor ? ` (${data.last_editor})` : '';
+                        this.dom.noteInfo.textContent = `Utolsó módosítás: ${date.toLocaleString('hu-HU')}${editor}`;
+                    }
+                }
+            } catch (error) {
+                console.error('Hiba a jegyzet betöltésekor:', error);
+            }
+        },
+
+        async saveCurrentNote() {
+            const noteTitle = prompt('Add meg a jegyzet címét:', `Jegyzet - ${new Date().toLocaleDateString('hu-HU')}`);
+            if (!noteTitle) return;
+
+            try {
+                const noteData = {
+                    id: Date.now().toString(),
+                    title: noteTitle,
+                    content: this.currentNote,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                    author: this.username
+                };
+
+                // Küldés SocketIO-n keresztül a realtime frissítéshez
+                if (this.socket) {
+                    this.socket.emit('notes_save', {
+                        note_data: noteData
+                    });
+                }
+
+                this.hasUnsavedChanges = false;
+                this.currentNoteId = noteData.id;
+                this.updateStatus();
+                
+            } catch (error) {
+                console.error('Hiba a jegyzet mentésekor:', error);
+                App.showNotification('Hiba a jegyzet mentésekor!', 'error');
+            }
+        },
+
+        async loadSavedNotes() {
+            try {
+                const response = await fetch('/api/notes/saved');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.savedNotes = data.notes || [];
+                    this.renderSavedNotes();
+                }
+            } catch (error) {
+                console.error('Hiba a mentett jegyzetek betöltésekor:', error);
+            }
+        },
+
+        renderSavedNotes() {
+            if (this.savedNotes.length === 0) {
+                this.dom.savedNotesList.innerHTML = `
+                    <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-8">
+                        <i class="fas fa-sticky-note text-2xl mb-2"></i>
+                        <p>Még nincsenek mentett jegyzetek</p>
+                    </div>
+                `;
+                return;
+            }
+
+            this.dom.savedNotesList.innerHTML = '';
+            this.savedNotes.forEach(note => {
+                const noteElement = document.createElement('div');
+                noteElement.className = 'note-item p-2 rounded-lg bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer border border-gray-200 dark:border-gray-600 transition';
+                
+                const date = new Date(note.updated_at).toLocaleDateString('hu-HU');
+                const preview = (note.content || '').substring(0, 50) + (note.content && note.content.length > 50 ? '...' : '');
+                const author = note.author ? ` (${note.author})` : '';
+                
+                noteElement.innerHTML = `
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1 min-w-0">
+                            <h5 class="text-sm font-medium text-gray-900 dark:text-white truncate" title="${this.escapeHtml(note.title)}">${this.escapeHtml(note.title)}</h5>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${date}${author}</p>
+                            ${preview ? `<p class="text-xs text-gray-600 dark:text-gray-300 mt-1 line-clamp-2">${this.escapeHtml(preview)}</p>` : ''}
+                        </div>
+                        <button class="delete-note ml-2 p-1 text-gray-400 hover:text-red-500 transition" data-id="${note.id}" title="Törlés">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                `;
+
+                noteElement.addEventListener('click', (e) => {
+                    if (e.target.closest('.delete-note')) {
+                        this.deleteNote(note.id);
+                    } else {
+                        this.loadNote(note);
+                    }
+                });
+
+                this.dom.savedNotesList.appendChild(noteElement);
+            });
+        },
+
+        loadNote(note) {
+            if (this.hasUnsavedChanges) {
+                if (!confirm('Vannak nem mentett változások. Biztosan be akarod tölteni a másik jegyzetet?')) {
+                    return;
+                }
+            }
+
+            this.currentNote = note.content || '';
+            this.currentNoteId = note.id;
+            this.dom.notesEditor.value = this.currentNote;
+            this.hasUnsavedChanges = false;
+            this.updateStatus();
+            this.updateCharCount();
+
+            const date = new Date(note.updated_at);
+            const author = note.author ? ` (${note.author})` : '';
+            this.dom.noteInfo.textContent = `"${note.title}" - ${date.toLocaleString('hu-HU')}${author}`;
+        },
+
+        async deleteNote(noteId) {
+            if (!confirm('Biztosan törölni akarod ezt a jegyzetet?')) {
+                return;
+            }
+
+            try {
+                // Küldés SocketIO-n keresztül a realtime frissítéshez
+                if (this.socket) {
+                    this.socket.emit('notes_delete', {
+                        note_id: noteId
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Hiba a jegyzet törlésekor:', error);
+                App.showNotification('Hiba a jegyzet törlésekor!', 'error');
+            }
+        },
+
+        createNewNote() {
+            if (this.hasUnsavedChanges) {
+                if (!confirm('Vannak nem mentett változások. Biztosan új jegyzetet akarsz kezdeni?')) {
+                    return;
+                }
+            }
+
+            this.currentNote = '';
+            this.currentNoteId = null;
+            this.dom.notesEditor.value = '';
+            this.hasUnsavedChanges = false;
+            this.updateStatus();
+            this.updateCharCount();
+            this.dom.noteInfo.textContent = '';
+            this.dom.notesEditor.focus();
+        },
+
+        copyNoteToClipboard() {
+            if (!this.currentNote.trim()) {
+                App.showNotification('Nincs mit másolni!', 'warning');
+                return;
+            }
+
+            navigator.clipboard.writeText(this.currentNote).then(() => {
+                App.showNotification('Jegyzet a vágólapra másolva!', 'success');
+            }).catch(() => {
+                // Fallback for older browsers
+                this.dom.notesEditor.select();
+                document.execCommand('copy');
+                App.showNotification('Jegyzet a vágólapra másolva!', 'success');
+            });
+        },
+
+        escapeHtml(text) {
+            const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
-    };    document.addEventListener('DOMContentLoaded', () => {
+    };document.addEventListener('DOMContentLoaded', () => {
         App.init();
         Chat.init();
+        Notes.init();
     });
 </script>
 </body>
@@ -1677,10 +2359,97 @@ def api_chat_messages():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/notes/current', methods=['GET', 'POST'])
+def api_notes_current():
+    """API endpoint for current note operations."""
+    if request.method == 'GET':
+        try:
+            notes_data = load_notes()
+            return jsonify(notes_data)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+            
+            notes_data = {
+                'current_note': data.get('current_note', ''),
+                'created_at': data.get('created_at'),
+                'updated_at': data.get('updated_at', datetime.now().isoformat())
+            }
+            
+            if save_notes(notes_data):
+                return jsonify({'success': True, 'message': 'Jegyzet mentve'})
+            else:
+                return jsonify({'error': 'Failed to save note'}), 500
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/notes/saved', methods=['GET', 'POST'])
+def api_notes_saved():
+    """API endpoint for saved notes operations."""
+    if request.method == 'GET':
+        try:
+            saved_notes = load_saved_notes()
+            return jsonify({'notes': saved_notes})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    elif request.method == 'POST':
+        try:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'No data provided'}), 400
+            
+            saved_notes = load_saved_notes()
+            
+            # Check if note with same ID already exists (update case)
+            existing_index = next((i for i, note in enumerate(saved_notes) if note.get('id') == data.get('id')), None)
+            
+            if existing_index is not None:
+                # Update existing note
+                saved_notes[existing_index] = data
+            else:
+                # Add new note
+                saved_notes.append(data)
+            
+            if save_saved_notes(saved_notes):
+                return jsonify({'success': True, 'message': 'Jegyzet mentve'})
+            else:
+                return jsonify({'error': 'Failed to save note'}), 500
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+@app.route('/api/notes/saved/<note_id>', methods=['DELETE'])
+def api_notes_saved_delete(note_id):
+    """API endpoint to delete a saved note."""
+    try:
+        saved_notes = load_saved_notes()
+        original_count = len(saved_notes)
+        
+        # Filter out the note with the specified ID
+        saved_notes = [note for note in saved_notes if note.get('id') != note_id]
+        
+        if len(saved_notes) == original_count:
+            return jsonify({'error': 'Note not found'}), 404
+        
+        if save_saved_notes(saved_notes):
+            return jsonify({'success': True, 'message': 'Jegyzet törölve'})
+        else:
+            return jsonify({'error': 'Failed to delete note'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # --- Szerver Indítása ---
 if __name__ == '__main__':
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
+    
+    if not os.path.exists(DATA_FOLDER):
+        os.makedirs(DATA_FOLDER)
     
     local_ip = get_local_ip()
     print("*" * 60)
@@ -1688,6 +2457,7 @@ if __name__ == '__main__':
     print("  Nyisd meg a böngésződben vagy olvasd be a QR kódot:")
     print(f"  -> http://{local_ip}:{PORT}")
     print("  Chat funkció engedélyezve!")
+    print("  Jegyzetfüzet funkció engedélyezve!")
     print("*" * 60)
     
     # SocketIO szerver indítása
